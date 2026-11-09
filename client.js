@@ -3577,6 +3577,31 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .rt-empty{padding:24px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:12.5px}
 .rt-err{color:var(--dsw-alias-state-error-primary);font-size:12px;padding:6px 10px}
+/* ── 添加目标面板 / 行内操作 / 新建靶标弹窗 ───────────────────────────── */
+.rt-rowops{display:flex;gap:4px;justify-content:flex-end;align-items:center}
+.rt-btn-mini{padding:1px 7px;font-size:11px;border-radius:5px}
+.rt-btn-danger{color:var(--dsw-alias-state-error-primary,#d33);border-color:color-mix(in srgb, var(--dsw-alias-state-error-primary,#d33) 45%, transparent)}
+.rt-addbox{padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);
+  background:var(--dsw-alias-bg-layer-2);display:flex;flex-direction:column;gap:6px}
+.rt-addhead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12.5px}
+.rt-addhint{font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.rt-addarea{width:100%;box-sizing:border-box;resize:vertical;min-height:58px;background:var(--dsw-alias-bg-layer-1);
+  border:1px solid var(--dsw-alias-border-l1);border-radius:6px;color:inherit;padding:6px 8px;
+  font-family:ui-monospace,Menlo,monospace;font-size:12px;outline:none}
+.rt-addarea:focus{border-color:var(--dsw-alias-brand-primary)}
+.rt-addops{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rt-addres{display:flex;flex-direction:column;gap:2px;max-height:120px;overflow:auto;
+  border-top:1px dashed var(--dsw-alias-border-l1);padding-top:5px}
+.rt-addres-i{display:flex;gap:10px;font-size:11.5px;line-height:1.6}
+.rt-addres-t{font-family:ui-monospace,Menlo,monospace;white-space:nowrap;max-width:45%;overflow:hidden;text-overflow:ellipsis}
+.rt-addres-d{color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis}
+.rt-addres-i.is-ok .rt-addres-t{color:var(--dsw-alias-state-success-primary,#0a7)}
+.rt-addres-i.is-err .rt-addres-t{color:var(--dsw-alias-state-error-primary,#d33)}
+.rt-dlg-bg{position:fixed;inset:0;background:rgba(10,14,12,.45);display:flex;align-items:center;justify-content:center;z-index:9999}
+.rt-dlg{width:min(400px,92vw);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);
+  border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 24px 60px rgba(0,0,0,.3)}
+.rt-dlg h4{margin:0;font-size:14px}
+.rt-dlg-ops{display:flex;gap:8px;justify-content:flex-end}
 .rt-foot{padding:8px 12px;border-top:1px solid var(--dsw-alias-border-l1);font-size:11px;
   color:var(--dsw-alias-label-secondary);display:flex;gap:12px;flex-wrap:wrap;align-items:center}
 .rt-icon-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;border:1px solid var(--dsw-alias-border-l1);
@@ -4275,6 +4300,14 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
       const [web, setWeb] = React.useState(null)
       const [openId, setOpenId] = React.useState(null)
       const [detail, setDetail] = React.useState(null)
+      /* 添加目标：批量输入框 + 每行结果；行内动作的进行中状态与统一提示 */
+      const [addOpen, setAddOpen] = React.useState(false)
+      const [addText, setAddText] = React.useState('')
+      const [addBusy, setAddBusy] = React.useState(false)
+      const [addResults, setAddResults] = React.useState(null)
+      const [probeId, setProbeId] = React.useState(0)
+      const [delId, setDelId] = React.useState(0)
+      const [notice, setNotice] = React.useState(null)
       /* 左侧「外网 C 段 / 内网 C 段」两组各自折叠，状态按靶标记住 */
       const sideCollapse = useCollapse('assets-side:' + eng)
       const seq = React.useRef(0)
@@ -4326,6 +4359,85 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
         api({ op: 'asset', engagement: eng, id: id }).then((r) => {
           if (r && r.ok && r.asset) setDetail(r.asset)
         }, () => {})
+      }
+
+      /**
+       * 批量添加目标。一次贴多行，host 逐条解析（域名→IP）并落库；
+       * 失败的行留在输入框里，成功/失败逐行回显 —— 不允许再出现"点了没反应"。
+       */
+      const submitTargets = () => {
+        const list = String(addText || '').split(/[\n,;]+/).map((x) => x.trim()).filter((x) => x !== '')
+        if (list.length === 0) { setNotice({ err: '请先填写目标：IP / 域名 / http(s):// URL，每行一个' }); return }
+        if (!eng) { setNotice({ err: '请先在顶部选择或创建一个靶标' }); return }
+        setAddBusy(true)
+        setNotice(null)
+        setAddResults(null)
+        api({ op: 'addTargets', engagement: eng, targets: list }).then((r) => {
+          setAddBusy(false)
+          if (!r || r.ok === false) { setNotice({ err: (r && r.error) || '添加失败' }); return }
+          const items = Array.isArray(r.items) ? r.items : []
+          setAddResults(items)
+          setNotice({
+            ok: '已添加 ' + (r.added || 0) + ' 个目标' + (r.failed ? '，失败 ' + r.failed + ' 个（已留在输入框）' : ''),
+          })
+          /* 失败行留着改；全部成功就清空 */
+          setAddText(items.filter((x) => !x.ok).map((x) => x.target).join('\n'))
+          /* 清掉筛选：新资产不应被上一轮的搜索条件挡住 */
+          setQ('')
+          setQApplied('')
+          if (onRefresh) onRefresh()
+        }, (e) => {
+          setAddBusy(false)
+          setNotice({ err: String((e && e.message) || e) })
+        })
+      }
+
+      /** 「开始」：host 侧快速探测（TCP 常用端口 + Web 标题），完成后自动刷新列表。 */
+      const startProbe = (it) => {
+        if (!eng || probeId) return
+        setProbeId(it.id)
+        setNotice(null)
+        api({ op: 'probeAsset', engagement: eng, asset_id: it.id }).then((r) => {
+          setProbeId(0)
+          if (!r || r.ok === false) { setNotice({ err: (r && r.error) || '探测失败' }); return }
+          const ports = (r.ports || []).join(', ') || '无开放端口'
+          const firstWeb = (r.web || [])[0]
+          setNotice({
+            ok: '探测完成 ' + r.ip + '：' + ports
+              + (firstWeb ? '｜' + (firstWeb.status || '') + ' ' + (firstWeb.title || firstWeb.url || '') : '')
+              + '（' + (r.elapsed_ms || 0) + 'ms）',
+          })
+          /* 有结果就直接展开这一行，省得用户再点一次 */
+          if ((r.ports || []).length) {
+            setOpenId(it.id)
+            setDetail(null)
+            api({ op: 'asset', engagement: eng, id: it.id }).then((x) => {
+              if (x && x.ok && x.asset) setDetail(x.asset)
+            }, () => {})
+          }
+          if (onRefresh) onRefresh()
+        }, (e) => {
+          setProbeId(0)
+          setNotice({ err: String((e && e.message) || e) })
+        })
+      }
+
+      /** 「删除」：仅允许删"没产出成果"的资产，有漏洞/得分/证据的会被 host 拒绝并说明原因。 */
+      const removeAsset = (it) => {
+        if (!eng || delId) return
+        if (!window.confirm('删除资产 ' + it.ip + '？\n只会删掉它的端口/域名/观察记录；已产出成果的资产会被拒绝。')) return
+        setDelId(it.id)
+        setNotice(null)
+        api({ op: 'deleteAsset', engagement: eng, id: it.id }).then((r) => {
+          setDelId(0)
+          if (!r || r.ok === false) { setNotice({ err: (r && r.error) || '删除失败' }); return }
+          setNotice({ ok: '已删除 ' + (r.ip || it.ip) + '（' + (r.segment || '') + '）' })
+          if (openId === it.id) { setOpenId(null); setDetail(null) }
+          if (onRefresh) onRefresh()
+        }, (e) => {
+          setDelId(0)
+          setNotice({ err: String((e && e.message) || e) })
+        })
       }
 
       const segs = (snapshot && snapshot.segments) || []
@@ -4385,11 +4497,21 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
 
       const toolbar = h('div', { className: 'rt-toolbar' },
         h('input', {
-          className: 'rt-input', style: { flex: '1 1 150px' }, placeholder: '搜索 IP / 域名 / 指纹（回车）',
+          className: 'rt-input', style: { flex: '1 1 150px' },
+          placeholder: '搜索 IP / 域名 / 指纹（回车）',
           value: q, onChange: (e) => setQ(e.target.value),
           onKeyDown: (e) => { if (e.key === 'Enter') setQApplied(q) },
         }),
         h('button', { className: 'rt-btn', onClick: () => setQApplied(q) }, '搜索'),
+        h('button', {
+          className: 'rt-btn rt-btn-primary',
+          title: '打开目标输入框：支持一次贴多行 IP / 域名 / URL，域名自动解析后入库',
+          onClick: () => {
+            setAddOpen((v) => !v)
+            setNotice(null)
+            if (!addOpen) setAddResults(null)
+          },
+        }, addOpen ? '收起添加' : '＋ 添加目标'),
         h('input', {
           className: 'rt-input', style: { width: '78px' }, placeholder: '服务',
           value: service, onChange: (e) => setService(e.target.value),
@@ -4438,12 +4560,19 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
       const conclusion = h('div', { className: 'rt-concl' },
         conclItem('all', '台资产', snapStats.assets, noFilter, () => {
           setTestStatus(''); setPriority(''); setScope(''); setProv(''); setAssetState(''); setCidr(null)
+          setQ(''); setQApplied('')
         }),
         conclItem('live', '存活', snapStats.liveAssets, assetState === 'live', () => { setAssetState((v) => (v === 'live' ? '' : 'live')); setTestStatus('') }),
         conclItem('untested', '待测', tests.untested, testStatus === 'untested', () => toggleTest('untested')),
         conclItem('testing', '测试中', tests.testing, testStatus === 'testing', () => toggleTest('testing')),
         conclItem('tested', '已测', tests.tested, testStatus === 'tested', () => toggleTest('tested')),
         conclItem('giveup', '放弃', (tests.abandoned || 0) + (tests.blocked || 0), testStatus === 'abandoned,blocked', () => toggleTest('abandoned,blocked')),
+        qApplied
+          ? h('span', Object.assign({
+              className: 'rt-tag', style: { cursor: 'pointer' }, title: '清空搜索条件',
+            }, clickable(() => { setQ(''); setQApplied('') }, { label: '清空搜索 ' + qApplied })),
+              '搜索：' + (qApplied.length > 18 ? qApplied.slice(0, 18) + '…' : qApplied) + ' ×')
+          : null,
         h('div', { className: 'rt-spacer' }),
         h('select', {
           className: 'rt-input', value: sort, onChange: (e) => setSort(e.target.value),
@@ -4455,9 +4584,12 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
           h('option', { value: 'ports' }, '排序：端口多优先'),
           h('option', { value: 'ip' }, '排序：按 IP')))
 
-      const head = h('div', { className: 'rt-row head' },
+      /* 资产表 6 列：多出的一列放「开始 / 删除」。用内联 grid 覆盖，
+         不再改全局 .rt-row（漏洞表等也复用这个类，别被连带改窄）。 */
+      const ASSET_GRID = 'minmax(92px,1.05fr) 60px 86px minmax(0,1.15fr) minmax(0,1fr) 104px'
+      const head = h('div', { className: 'rt-row head', style: { gridTemplateColumns: ASSET_GRID } },
         h('span', null, 'IP'), h('span', null, '易打'), h('span', null, '测试状态'),
-        h('span', null, '开放端口 / 服务'), h('span', null, '指纹'))
+        h('span', null, '开放端口 / 服务'), h('span', null, '指纹'), h('span', null, '操作'))
 
       const rowNodes = []
       for (const it of state.items) {
@@ -4468,7 +4600,7 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
         const shownPorts = openPorts.slice(0, 3).map((p) => p.port + (p.service ? '/' + p.service : '')).join(', ')
         const morePorts = openPorts.length > 3 ? ' +' + (openPorts.length - 3) : ''
         rowNodes.push(h('div', Object.assign({
-          key: 'r' + it.id, className: 'rt-row',
+          key: 'r' + it.id, className: 'rt-row', style: { gridTemplateColumns: ASSET_GRID },
         }, clickable(() => toggleRow(it.id), { label: '展开资产 ' + it.ip, expanded: openId === it.id })),
           h('span', { className: 'rt-mono', style: { display: 'flex', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' } },
             h('span', {
@@ -4492,7 +4624,21 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
           h('span', null, h(TestTag, { s: it.test_status }),
             it.blocked_count ? h('span', { className: 'rt-tag', style: { color: '#ef4444', borderColor: '#ef444455', marginLeft: 4 } }, '封' + it.blocked_count) : null),
           h('span', { title: portText }, (shownPorts || '—') + morePorts),
-          h('span', { title: fpText }, fpText.length > 30 ? fpText.slice(0, 30) + '…' : fpText)))
+          h('span', { title: fpText }, fpText.length > 30 ? fpText.slice(0, 30) + '…' : fpText),
+          h('span', { className: 'rt-rowops' },
+            h('button', {
+              className: 'rt-btn rt-btn-mini rt-btn-primary',
+              /* 全局只允许一个行内任务在跑：避免并发点出多个探测，也避免点了没反应的死按钮 */
+              disabled: probeId !== 0 || delId !== 0,
+              title: '立即对这台资产做快速探测：常用端口 TCP 连通 + Web 标题，结果直接落库',
+              onClick: (e) => { e.stopPropagation(); startProbe(it) },
+            }, probeId === it.id ? '探测中…' : '开始'),
+            h('button', {
+              className: 'rt-btn rt-btn-mini rt-btn-danger',
+              disabled: probeId !== 0 || delId !== 0,
+              title: '从资产测绘里删除这台资产（已产出成果的资产会被拒绝）',
+              onClick: (e) => { e.stopPropagation(); removeAsset(it) },
+            }, delId === it.id ? '删除中…' : '删除'))))
 
         if (openId !== it.id) continue
         const d = detail && detail.id === it.id ? detail : null
@@ -4524,8 +4670,27 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
         /* 详情分三层：3 行必读 → 「展开全部」后才是溯源、原始记录与备注全文 */
         const all = showAll === it.id
         const noteLines = d && d.test_notes ? d.test_notes.split('\n').filter(Boolean) : []
+        const agentTask = '靶标：' + (eng || '') + '。资产：' + it.ip
+          + ((d && d.names && d.names.length) ? '（' + d.names.map((n) => n.name).join(', ') + '）' : '')
+          + ((d && d.ports && d.ports.length) ? '，已知端口 ' + d.ports.filter((p) => p.state === 'open').map((p) => p.port).join(',') : '')
+          + '。\n按信息收集阶段执行：先 redteam_asset_query 读取该资产，用 pd-httpx 复核存活与标题，'
+          + '再用 gogo/fscan 做全端口与服务识别，结果用 redteam_asset_add 回填（provenance=active，tool 写实际命令），'
+          + '最后用 redteam_asset_assess 评估易打性并给出优先入口；每个动作写 redteam_chain_add（stage_code=recon）。'
         const inner = d
           ? h('div', null,
+              /* 详情里的下一步：复制一份可直接粘进红队模式的任务 */
+              h('div', { className: 'rt-kv' }, h('b', null, '下一步'), h('span', null,
+                h('button', {
+                  className: 'rt-btn rt-btn-mini',
+                  title: '复制任务到剪贴板；在会话里切「红队模式」后粘贴发送即可交给智能体',
+                  onClick: async (e) => {
+                    e.stopPropagation()
+                    const okFlag = await copyText(agentTask)
+                    setNotice(okFlag
+                      ? { ok: '已复制红队任务：切到「红队模式」粘贴发送即可' }
+                      : { err: '复制失败（浏览器未授权剪贴板），请手动选中任务文本复制' })
+                  },
+                }, '复制红队任务'))),
               /* 必读三行 */
               h('div', { className: 'rt-kv' }, h('b', null, '测试'), h('span', null,
                 h(TestTag, { s: d.test_status }),
@@ -4574,7 +4739,11 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
       }
 
       const listPane = h('div', { className: 'rt-table' }, head, rowNodes,
-        !state.loading && !state.items.length ? h('div', { className: 'rt-empty' }, '没有匹配的资产') : null)
+        !state.loading && !state.items.length
+          ? h('div', { className: 'rt-empty' }, qApplied
+            ? '没有匹配「' + qApplied + '」的资产。要把它当新目标录入，点上方「＋ 添加目标」。'
+            : '还没有资产。点上方「＋ 添加目标」录入 IP / 域名 / URL，入库后点行内「开始」即可探测。')
+          : null)
 
       /* 域名维度：域名 → 关联资产 */
       const domainPane = h('div', { className: 'rt-table' },
@@ -4621,8 +4790,54 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
       /* 发现时间视图自带滚动容器，直接放进 rt-main 的 flex 里 */
       else if (view === 'timeline') pane = h(DiscoveryView, { engagement: eng, refreshKey: refreshKey })
 
+      /* 添加目标面板：批量输入 + 逐行结果。单独一块，不再占用搜索框，
+         避免"以为在录入、其实在过滤"的老问题。 */
+      const addBox = addOpen
+        ? h('div', { className: 'rt-addbox' },
+            h('div', { className: 'rt-addhead' },
+              h('b', null, '添加目标'),
+              h('span', { className: 'rt-addhint' }, '每行一个：IP / 域名 / http(s):// URL；域名会自动解析成 IP'),
+              h('span', { className: 'rt-spacer' }),
+              h('span', { className: 'rt-addhint' }, '一次最多 50 个')),
+            h('textarea', {
+              className: 'rt-addarea',
+              rows: 3,
+              spellCheck: false,
+              placeholder: '10.0.0.5\nv10.example.com\nhttp://192.168.1.10:8080/admin',
+              value: addText,
+              onChange: (e) => setAddText(e.target.value),
+              onKeyDown: (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitTargets() } },
+            }),
+            h('div', { className: 'rt-addops' },
+              h('button', { className: 'rt-btn rt-btn-primary', disabled: addBusy, onClick: submitTargets },
+                addBusy ? '添加中…' : ('添加' + ((String(addText || '').split(/[\n,;]+/).filter((x) => x.trim() !== '')).length
+                  ? ' ' + String(addText || '').split(/[\n,;]+/).filter((x) => x.trim() !== '').length + ' 个目标'
+                  : '目标'))),
+              h('button', { className: 'rt-btn', disabled: addBusy, onClick: () => { setAddOpen(false); setAddResults(null); setNotice(null) } }, '关闭'),
+              h('span', { className: 'rt-addhint' }, 'Ctrl/⌘ + Enter 提交')),
+            addResults && addResults.length
+              ? h('div', { className: 'rt-addres' }, addResults.map((x) => h('div', {
+                  key: 'ar-' + x.target,
+                  className: 'rt-addres-i' + (x.ok ? ' is-ok' : ' is-err'),
+                },
+                  h('span', { className: 'rt-addres-t' }, (x.ok ? '✓ ' : '✗ ') + x.target),
+                  h('span', { className: 'rt-addres-d' }, x.ok ? ((x.addresses || []).join(', ') || '已入库') : (x.error || '失败')))))
+              : null)
+        : null
+
       return h('div', { className: 'rt-split' }, side,
         h('div', { className: 'rt-main' }, view === 'testing' ? null : toolbar,
+          addBox,
+          /* 行内动作/添加的结果统一挂这里：成功和失败都看得见 */
+          notice
+            ? h('div', {
+                className: 'rt-note',
+                role: 'status',
+                style: { margin: '2px 10px 6px', color: notice.err ? 'var(--rt-danger, #d33)' : 'var(--dsw-alias-label-secondary)' },
+              }, notice.err || notice.ok, ' ',
+                h('span', Object.assign({ className: 'rt-more' },
+                  clickable(() => setNotice(null), { label: '关闭提示' })), '×'))
+            : null,
           conclusion,
           state.error ? h('div', { className: 'rt-err' }, state.error) : null,
           pane))
@@ -7346,6 +7561,7 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
       const [snapshot, setSnapshot] = React.useState(null)
       const [err, setErr] = React.useState(null)
       const [newName, setNewName] = React.useState('')
+      const [newOpen, setNewOpen] = React.useState(false)
       const [geom, setGeom] = React.useState(loadRtGeom)
       const [creating, setCreating] = React.useState(false)
       const [refreshKey, setRefreshKey] = React.useState(0)
@@ -7396,6 +7612,7 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
           setCreating(false)
           if (!r || r.ok === false) { setErr((r && r.error) || '创建失败'); return }
           setNewName('')
+          setNewOpen(false)
           refreshList(r.engagement && r.engagement.id)
         }, (e) => { setCreating(false); setErr(String((e && e.message) || e)) })
       }
@@ -7601,6 +7818,10 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
             h('option', { value: '', disabled: true }, engagements.length ? '选择靶标' : '暂无靶标'),
             engagements.map((x) => h('option', { key: x.id, value: x.id }, x.name || x.id || '未命名')),
           ),
+          h('button', {
+            className: 'rt-btn', style: { flex: 'none' }, title: '新建一个靶标（演练工作区）',
+            onClick: () => { setNewName(''); setNewOpen(true) },
+          }, '＋ 新建'),
           h('div', { className: 'rt-spacer' }),
           embedded ? null : h(VersionBar, null),
           full ? h('button', { className: 'rt-btn', title: '回到带侧栏的普通界面（或按 Esc）', onClick: exitFull }, '退出全面浏览') : null,
@@ -7636,7 +7857,29 @@ body[data-ds-dark-theme] .dshp-rewind-item span{color:var(--dsw-alias-label-tert
           h('span', null, '被动/主动 ' + (stats.passiveSignals || 0) + '/' + (stats.activeSignals || 0)),
           h('div', { className: 'rt-spacer' }),
           full ? h('span', null, '按 Esc 或点右上角「退出全面浏览」回到带侧栏的界面') : null,
-          h('span', null, 'SQLite · ' + (snapshot && snapshot.engagement ? snapshot.engagement.name : ''))))
+          h('span', null, 'SQLite · ' + (snapshot && snapshot.engagement ? snapshot.engagement.name : ''))),
+        /* 新建靶标：以前一个有靶标的界面里没有任何"再加一个"的入口，只能靠首屏表单 */
+        newOpen
+          ? h('div', {
+              className: 'rt-dlg-bg',
+              onClick: (e) => { if (e.target === e.currentTarget) setNewOpen(false) },
+            },
+              h('div', { className: 'rt-dlg', role: 'dialog', 'aria-modal': 'true', 'aria-label': '新建靶标' },
+                h('h4', null, '新建靶标'),
+                h('div', { className: 'rt-addhint' }, '输入演练靶标单位名称，创建后自动切换到该靶标。'),
+                err ? h('div', { className: 'rt-err', style: { padding: 0 } }, err) : null,
+                h('input', {
+                  className: 'rt-input', autoFocus: true, placeholder: '例如：示例科技有限公司',
+                  value: newName, onChange: (e) => setNewName(e.target.value),
+                  onKeyDown: (e) => { if (e.key === 'Enter') openEngagement() },
+                }),
+                h('div', { className: 'rt-dlg-ops' },
+                  h('button', { className: 'rt-btn', onClick: () => setNewOpen(false) }, '取消'),
+                  h('button', {
+                    className: 'rt-btn rt-btn-primary', disabled: creating || !String(newName).trim(),
+                    onClick: () => openEngagement(),
+                  }, creating ? '创建中…' : '创建'))))
+          : null)
     }
 
     /* ---------------------------------------------------------- 入口按钮 */
