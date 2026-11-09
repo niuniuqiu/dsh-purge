@@ -28,7 +28,9 @@
   config:
     includeHarnessIdentity: false
     personaPrefix: ""
-    personaSuffix: Your working directory is {{cwd}}.
+    # DSH 0.2.1+ 只注册 provider/model，写死 {{cwd}} 会抛 unknown prompt variable，
+    # 整轮对话 处理失败。工作目录句改由 lib/identity.js 写入真实 cwd 字面量。
+    personaSuffix: ""
 
 - id: dsh-purge
   inject: [systemPrompt, tools]
