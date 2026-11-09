@@ -371,15 +371,15 @@ function Update-ProfileFile([string]$Path, [bool]$DryRun) {
   Write-Host "      $bak"
 }
 
-function Add-UniqueDir($List, [string]$Dir) {
+function Add-UniqueDir([System.Collections.Generic.List[string]]$List, [string]$Dir) {
   if (-not $Dir) { return }
   $Dir = $Dir.Trim().TrimEnd('\')
   if (-not $Dir) { return }
   if ($Dir -match '^[A-Za-z]:$') { return }
   $leaf = Split-Path -Leaf $Dir
   if ($leaf -eq 'Windows' -or $leaf -eq 'Program Files' -or $leaf -eq 'Program Files (x86)' -or $leaf -eq 'Users') { return }
-  foreach ($e in @($List)) {
-    if ([string]$e -and ([string]$e).Equals($Dir, [StringComparison]::OrdinalIgnoreCase)) { return }
+  for ($i = 0; $i -lt $List.Count; $i++) {
+    if ([string]::Equals([string]$List[$i], $Dir, [System.StringComparison]::OrdinalIgnoreCase)) { return }
   }
   [void]$List.Add($Dir)
 }
@@ -397,12 +397,15 @@ function Get-SearchDirs([string]$DshSource) {
   }
   if ($env:LOCALAPPDATA) { Add-UniqueDir $dirs (Join-Path $env:LOCALAPPDATA 'DeepSeek Harness') }
   if ($env:APPDATA) { Add-UniqueDir $dirs (Join-Path $env:APPDATA 'DeepSeek Harness') }
-  return $dirs
+  return ,$dirs
 }
 
 function Find-RelativeFile([string]$DshSource, [string[]]$RelativeNames) {
   $dirs = Get-SearchDirs $DshSource
-  foreach ($d in @($dirs)) {
+  if ($null -eq $dirs) { return $null }
+  for ($i = 0; $i -lt $dirs.Count; $i++) {
+    $d = [string]$dirs[$i]
+    if (-not $d) { continue }
     foreach ($rel in $RelativeNames) {
       $p = Join-Path $d $rel
       if (Test-Path -LiteralPath $p) { return $p }
@@ -527,7 +530,7 @@ function Invoke-PnpmInstall([string]$Dir, [string]$DshSource, [bool]$DryRun) {
   $argList = New-Object System.Collections.Generic.List[string]
   foreach ($a in @($found.Prefix)) { if ($null -ne $a -and "$a" -ne '') { [void]$argList.Add([string]$a) } }
   [void]$argList.Add('install')
-  $invokeArgs = @($argList.ToArray())
+  $invokeArgs = $argList.ToArray()
   Push-Location -LiteralPath $Dir
   try {
     $cwd = [System.IO.Path]::GetFullPath((Get-Location).ProviderPath).TrimEnd('\')
@@ -717,20 +720,28 @@ function Test-HomeLayout([string]$Path) {
   $profiles = Join-Path $Path 'profiles'
   if (-not (Test-Path -LiteralPath $profiles)) { return '没有 profiles 目录' }
   $any = $false
-  $dirs = Get-ChildItem -LiteralPath $profiles -Directory -ErrorAction SilentlyContinue
-  foreach ($d in @($dirs)) {
+  $dirs = @(Get-ChildItem -LiteralPath $profiles -Directory -ErrorAction SilentlyContinue)
+  foreach ($d in $dirs) {
+    if ($null -eq $d) { continue }
     if (Test-Path -LiteralPath (Join-Path $d.FullName 'package.json')) { $any = $true; break }
   }
   if (-not $any) { return 'profiles 下没有 package.json' }
   return ''
 }
 
-function Add-HomeCandidate($Checked, $Valid, [string]$Path, [string]$Reason) {
-  if (-not $Path) { return }
+function Add-HomeCandidate(
+  [System.Collections.ArrayList]$Checked,
+  [System.Collections.ArrayList]$Valid,
+  [string]$Path,
+  [string]$Reason
+) {
+  if ([string]::IsNullOrWhiteSpace($Path)) { return }
   $Path = $Path.Trim().Trim('"').TrimEnd('\')
   if (-not $Path) { return }
-  foreach ($c in @($Checked)) {
-    if ($c.Path.Equals($Path, [StringComparison]::OrdinalIgnoreCase)) { return }
+  # Windows PowerShell 5.1 里 @() 包住空的 List[object] 会报「参数类型不匹配」，这里按下标遍历
+  for ($i = 0; $i -lt $Checked.Count; $i++) {
+    $existing = [string]$Checked[$i].Path
+    if ([string]::Equals($existing, $Path, [System.StringComparison]::OrdinalIgnoreCase)) { return }
   }
   $note = Test-HomeLayout $Path
   $ok = ($note -eq '')
@@ -741,8 +752,8 @@ function Add-HomeCandidate($Checked, $Valid, [string]$Path, [string]$Reason) {
 }
 
 function Get-HomeCandidates {
-  $checked = New-Object System.Collections.Generic.List[object]
-  $valid = New-Object System.Collections.Generic.List[object]
+  $checked = New-Object System.Collections.ArrayList
+  $valid = New-Object System.Collections.ArrayList
   if ($env:DSH_HOME) {
     $before = $checked.Count
     Add-HomeCandidate $checked $valid $env:DSH_HOME '环境变量 DSH_HOME'
@@ -778,7 +789,7 @@ function Get-HomeCandidates {
 }
 
 function Get-ProfileStatus([string]$DshHome) {
-  $result = New-Object System.Collections.Generic.List[object]
+  $result = New-Object System.Collections.ArrayList
   foreach ($name in @('web', 'desktop')) {
     $dir = Join-Path $DshHome ("profiles\" + $name)
     $pkg = Join-Path $dir 'package.json'
@@ -806,7 +817,7 @@ function Get-ProfileStatus([string]$DshHome) {
     $st.Reason = $expect
     [void]$result.Add($st)
   }
-  return $result.ToArray()
+  for ($i = 0; $i -lt $result.Count; $i++) { Write-Output $result[$i] }
 }
 
 function Read-Choice([string]$Prompt, [string[]]$Valid) {
@@ -826,7 +837,7 @@ function Show-ManualSteps([string]$DshHome, $Names) {
   Write-Host ""
   Write-Host "文件已经放好。下面这些脚本不会代做:"
   Write-Host "  1. 完全退出刚装的那个宿主，再打开。"
-  foreach ($n in @($Names)) {
+  foreach ($n in $Names) {
     if ($n -eq 'web') { Write-Host "     Web: 关掉 dsh web 再开。" }
     if ($n -eq 'desktop') { Write-Host "     桌面: 退出托盘，再打开对应 exe。" }
   }
@@ -1000,10 +1011,10 @@ function Main {
     $found = Get-HomeCandidates
   } else {
     $found = Get-HomeCandidates
-    $valid = @($found.Valid)
+    $valid = $found.Valid
     if ($valid.Count -eq 0) {
       Write-Host "没有找到可用的 DSH_HOME。检查过:"
-      foreach ($c in @($found.Checked)) {
+      foreach ($c in $found.Checked) {
         $flag = '跳过'
         if ($c.Ok) { $flag = '可用' }
         Write-Host "  [$flag] $($c.Path)"
@@ -1061,7 +1072,7 @@ function Main {
   }
   $selected = New-Object System.Collections.Generic.List[string]
   if ($profileArg -eq 'both') {
-    foreach ($n in @($okNames)) { [void]$selected.Add([string]$n) }
+    for ($i = 0; $i -lt $okNames.Count; $i++) { [void]$selected.Add([string]$okNames[$i]) }
     if ($selected.Count -eq 0) { throw "web 和 desktop 都不可用" }
   } elseif ($profileArg) {
     $hit = $null
@@ -1095,7 +1106,7 @@ function Main {
   Sync-Plugin $dest $dryRun
 
   $done = New-Object System.Collections.Generic.List[string]
-  foreach ($name in @($selected)) {
+  foreach ($name in $selected) {
     $dir = Join-Path $dshHome ("profiles\" + $name)
     $pkg = Join-Path $dir 'package.json'
     Write-Host ""
@@ -1139,10 +1150,11 @@ try {
 } catch {
   Write-Host ""
   Write-Host "安装失败:"
-  Write-Host $_.Exception.Message
-  if (@($script:Backups).Count -gt 0) {
+  Write-Host ("{0}: {1}" -f $_.Exception.GetType().Name, $_.Exception.Message)
+  if ($_.Exception.InnerException) { Write-Host ("原因: {0}" -f $_.Exception.InnerException.Message) }
+  if ($script:Backups.Count -gt 0) {
     Write-Host "已留下的备份（这是修改前的 package.json）:"
-    foreach ($b in @($script:Backups)) { Write-Host "  $b" }
+    foreach ($b in $script:Backups) { Write-Host "  $b" }
     Write-Host "package.json 若已改好，修好 pnpm 后直接重跑即可，不必先还原。"
   }
   if ($_.ScriptStackTrace) { Write-Host $_.ScriptStackTrace }
